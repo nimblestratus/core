@@ -58,6 +58,10 @@ install_images () {
 # etcd does not start properly.
 
 get_nova_ip () {
+    local count=$NUM_INSTANCES
+    if [[ $# -gt 0 ]];then
+	count=$1
+    fi
     local network=`nova net-list|grep $OS_NETWORK|awk '{print $(NF - 1)}'`
     debug network: $network
     # delete the first, second and last IP in the subnet to account for 
@@ -70,9 +74,9 @@ get_nova_ip () {
     
     debug pattern: $pattern
     if [[ "$pattern" != '()' ]]; then 
-	export MY_IP=`cat /tmp/ip_range.$$|egrep -v "$pattern"|head -1`
+	export MY_IP=`cat /tmp/ip_range.$$|egrep -v "$pattern"|head -${count}`
     else
-	export MY_IP=`head -1 /tmp/ip_range.$$`
+	export MY_IP=`head -${count} /tmp/ip_range.$$`
     fi
     debug IP : $MY_IP
 }
@@ -95,12 +99,34 @@ install_nova_image () {
     fi
 }
 
+calculate_peers () {
+MY_PEERS="`cat /tmp/cluster_ip.$$ | grep -v $MY_IP|awk '{printf("%s:7001,",$0)}'|sed -e 's/,$//'`,${MASTER_IP}:7001"
+}
+
+get_cluster_addresses () {
+    case $PROVISIONER in 
+	nova)
+	    get_nova_ip $NUM_PEERS
+	    echo $MY_IP|sed -e 's/ /\n/g' > /tmp/cluster_ip.$$
+	    ;;
+	*)
+	    echo "Provisioner not defined"
+	    exit 1
+	    ;;
+    esac
+}
+
+
 provision () {
     OS_INSTANCE_NAME=$1
     render_template ${BASE}/etc/user-data > /tmp/user-data.${OS_INSTANCE_NAME}.$$
     case $PROVISIONER in
 	nova)
-	    get_nova_ip
+	    if [[ $# -gt 1 ]]; then
+		MY_IP=$2
+	    else
+		get_nova_ip
+	    fi
 	    debug "My IP is: $MY_IP"
 	    ETCD_PEERS="${MY_IP}:7001"
 	    ETCD_ADDR="${MY_IP}:4001"
@@ -109,7 +135,8 @@ provision () {
 	    if [[ "${OS_INSTANCE_NAME}" == "master" ]]; then
 		render_template ${BASE}/etc/user-data|grep -v 'peers: ' > /tmp/user-data.${OS_INSTANCE_NAME}.$$
 	    else
-		ETCD_PEERS="${MASTER_IP}:7001,${MY_IP}:7001"
+		calculate_peers
+		ETCD_PEERS=$MY_PEERS
 		render_template ${BASE}/etc/user-data > /tmp/user-data.${OS_INSTANCE_NAME}.$$
 	    fi
 	    nova boot \
@@ -127,6 +154,10 @@ provision () {
 	    until [[ $(nova list | egrep "$OS_INSTANCE_NAME.+(Running)" | wc -l) == $NUM_INSTANCES ]] ; do sleep 10; debug -n "."; done
 	    debug ""
 	    IP=$(nova list |  egrep "$OS_INSTANCE_NAME.+(Running)"|awk '{print $(NF-1)}'|sed -e 's/.*=//')
+	    ;;
+	*)
+	    echo "Provisioner not defined"
+	    exit 1
 	    ;;
     esac
 }

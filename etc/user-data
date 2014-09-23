@@ -8,6 +8,7 @@ coreos:
       peers: ${ETCD_PEERS}
       addr: ${ETCD_ADDR}
       peer-addr: ${ETCD_PEER_ADDR}
+      name: ${OS_INSTANCE_NAME}
   units:
     - name: etcd.service
       command: start

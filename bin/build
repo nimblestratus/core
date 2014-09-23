@@ -59,10 +59,13 @@ export FLEETCTL_TUNNEL=$IP
 export NUM_PEERS=`expr $CLUSTER_SIZE - 1`
 if [[ $NUM_PEERS -gt 0 ]]; then
     debug "Provisioning Peers"
-    for i in `seq $NUM_PEERS`
+    get_cluster_addresses
+    i=1
+    for ip in `cat /tmp/cluster_ip.$$`
     do
 	debug "Peer-${i}"
-	provision peer-${i}
+	provision peer-${i} $ip
+	i=`expr $i + 1`
     done
 fi
 
