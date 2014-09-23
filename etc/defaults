@@ -1,0 +1,39 @@
+# default settings
+
+# output debug info?
+export DEBUG=true
+
+
+export CLUSTER_SIZE=5
+
+# What services will be loaded?
+export SERVICES="discovery registry metrix gnatsd flit etcd-browser"
+
+# What provisioner?
+export PROVISIONER=nova
+
+# NOVA Variables
+# These are gotten from the OpenStack installation (or from Horizon)
+# The openstack rc file needs to be edited if you want to automate -- 
+# remove the 
+# query for the password & set the password
+export NOVARC=${BASE}/etc/provision/openrc.sh
+export OS_KEYPAIR_NAME=ops
+export OS_FLAVOR="m1.small"
+export OS_SECURITY_GROUPS=default
+export OS_NETWORK="fcff47b6-1943-45dd-9104-3c490a68e195"
+export NUM_INSTANCES=1
+
+# These are a hack to make the addresses in user-data work properly
+export ETCD_ADDR='$public_ipv4:4001'
+export ETCD_PEER_ADDR='$public_ipv4:7001'
+export FLEET_PUBLIC_IP='$public_ipv4'
+
+
+
+# registry code
+export REGISTRY_MIRROR=true
+export REGISTRY_FLAVOR=
+
+# ssh key
+export PUBKEY_FILE=${BASE}/etc/dummy_rsa.pub

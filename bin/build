@@ -1,0 +1,74 @@
+#!/bin/bash
+
+BASE=$(readlink -f $(dirname $(readlink -f $0))/..)
+
+# load functions
+source ${BASE}/bin/functions
+
+# set up environment
+source ${BASE}/etc/defaults
+
+# if a file is specified on the command line, then source it, 
+# otherwise if a config file exists, source it.
+if [[ $# -gt 0 ]];then
+    source $1
+else
+    if [[ -f ${BASE}/etc/config ]]; then
+	source ${BASE}/etc/config;
+    fi	 
+fi
+
+flag='false'
+message=""
+# check for commands
+if [[ ! $(type fleetctl) ]]; then
+    message=$'fleetctl'
+    flag=true
+fi
+
+if [[ ! $(type etcdctl) ]]; then
+    message="${messsage}, etcdctl"
+    flag=true
+fi
+
+if [[ ! `eval "type $PROVISIONER"` ]]; then
+    message="${message}, ${PROVISIONER}"
+    flag=true
+fi
+
+if [[ "${flag}" == "true" ]]; then
+    echo "Missing dependencies: ${message}"
+    exit 1
+fi
+
+# Install Images (if appropriate)
+install_images
+
+export PUBLIC_KEY=`cat $PUBKEY_FILE`
+
+# Provision Bootstrapping Master
+debug "Provisioning Master"
+ETCD_PEERS='$public_ipv4:7001'
+provision master
+export MASTER_IP=$IP
+export FLEETCTL_TUNNEL=$IP
+
+
+
+
+export NUM_PEERS=`expr $CLUSTER_SIZE - 1`
+if [[ $NUM_PEERS -gt 0 ]]; then
+    debug "Provisioning Peers"
+    for i in `seq $NUM_PEERS`
+    do
+	debug "Peer-${i}"
+	provision peer-${i}
+    done
+fi
+
+# start up the services
+for i in $SERVICES
+do
+debug Starting $i
+done
+

@@ -1,0 +1,39 @@
+#cloud-config
+
+coreos:
+  etcd:
+      # generate a new token for each unique cluster from https://discovery.etcd.io/new
+      # WARNING: replace each time you 'vagrant destroy'
+      #discovery: https://discovery.etcd.io/<token>
+      peers: ${ETCD_PEERS}
+      addr: ${ETCD_ADDR}
+      peer-addr: ${ETCD_PEER_ADDR}
+  units:
+    - name: etcd.service
+      command: start
+    - name: fleet.service
+      command: start
+      runtime: no
+      content: |
+        [Unit]
+        Description=fleet
+
+        [Service]
+        Environment=FLEET_PUBLIC_IP=${FLEET_PUBLIC_IP}
+        ExecStart=/usr/bin/fleet
+    - name: docker-tcp.socket
+      command: start
+      enable: true
+      content: |
+        [Unit]
+        Description=Docker Socket for the API
+
+        [Socket]
+        ListenStream=2375
+        Service=docker.service
+        BindIPv6Only=both
+
+        [Install]
+        WantedBy=sockets.target
+ssh_authorized_keys:
+  - ${PUBLIC_KEY}

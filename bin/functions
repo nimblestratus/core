@@ -1,0 +1,132 @@
+#!/bin/bash
+
+# the following is from http://www.unix.com/shell-programming-and-scripting/228663-get-all-ip-address-subnet-mask.html
+# Written by Corona688
+# printsubnet 172.16.0.0/16 | sed -e '2,$!d' -e '$d'
+printsubnet() {
+        local OLDIFS="$IFS"
+        local SUB=${1/\/*/}
+        local MASK=$(( 1 << ( 32 - ${1/*\//} )))
+
+        IFS="."
+                set -- $SUB
+                IPS=$((0x$(printf "%02x%02x%02x%02x\n" $1 $2 $3 $4)))
+        IFS="$OLDIFS"
+
+        for ((N=0; N<MASK; N++))
+        {
+                VAL=$((IPS|N))
+
+                printf "%d.%d.%d.%d\n"                  \
+                        $(( (VAL >> 24) & 255 ))        \
+                        $(( (VAL >> 16) & 255 ))        \
+                        $(( (VAL >> 8 ) & 255 ))        \
+                        $(( (VAL)       & 255 ))
+        }
+}
+
+
+
+
+
+# The following is from:
+# http://pempek.net/articles/2013/07/08/bash-sh-as-template-engine/
+#
+# render a template configuration file
+# expand variables + preserve formatting
+render_template () 
+{
+  eval "echo \"$(cat $1)\""
+}
+
+debug () {
+    if [[ "$DEBUG" == "true" ]]; then
+	echo $*
+    fi
+}
+
+install_images () {
+    case $PROVISIONER in 
+	nova)
+	    install_nova_image
+	    ;;
+    esac
+}
+
+# This is a hack to work around issues with Openstack & Cloud init -
+# CoreOS does not get '$public_ipv4' set properly and as a result
+# etcd does not start properly.
+
+get_nova_ip () {
+    local network=`nova net-list|grep $OS_NETWORK|awk '{print $(NF - 1)}'`
+    debug network: $network
+    # delete the first, second and last IP in the subnet to account for 
+    # Network Address, Router, and Broadcast Address
+    printsubnet $network|sed -e '3,$!d' -e '$d' > /tmp/ip_range.$$
+
+    # Create a pattern like (127.0.0.1|127.1.2.3) to filter out the "used"
+    # addresses
+    local pattern="(`nova list |awk -F '|' '{print $(NF - 1)}'|egrep -v '^ Networks' | grep -v '+'|sed -e 's/private=//' -e 's/,/\n/' -e 's/ //g'|awk 'BEGIN{ORS="|"}{print $0 "$"}'|sed -e 's/|$//'`)"
+    
+    debug pattern: $pattern
+    if [[ "$pattern" != '()' ]]; then 
+	export MY_IP=`cat /tmp/ip_range.$$|egrep -v "$pattern"|head -1`
+    else
+	export MY_IP=`head -1 /tmp/ip_range.$$`
+    fi
+    debug IP : $MY_IP
+}
+
+install_nova_image () {
+    debug Checking for CoreOS image
+    source ${NOVARC}
+    if [[ `nova image-list|grep CoreOS` == "" ]];then
+	debug Installing CoreOS to OpenStack
+	cd /tmp
+	wget http://alpha.release.core-os.net/amd64-usr/current/coreos_production_openstack_image.img.bz2
+	bunzip2 /tmp/coreos_production_openstack_image.img.bz2
+	glance image-create --name CoreOS \
+	    --container-format bare \
+	    --disk-format qcow2 \
+	    --file /tmp/coreos_production_openstack_image.img \
+	    --is-public True
+	rm coreos_production_openstack_image.img
+	cd -
+    fi
+}
+
+provision () {
+    OS_INSTANCE_NAME=$1
+    render_template ${BASE}/etc/user-data > /tmp/user-data.${OS_INSTANCE_NAME}.$$
+    case $PROVISIONER in
+	nova)
+	    get_nova_ip
+	    debug "My IP is: $MY_IP"
+	    ETCD_PEERS="${MY_IP}:7001"
+	    ETCD_ADDR="${MY_IP}:4001"
+	    ETCD_PEER_ADDR="${MY_IP}:7001"
+	    FLEET_PUBLIC_IP="${MY_IP}"
+	    if [[ "${OS_INSTANCE_NAME}" == "master" ]]; then
+		render_template ${BASE}/etc/user-data|grep -v 'peers: ' > /tmp/user-data.${OS_INSTANCE_NAME}.$$
+	    else
+		ETCD_PEERS="${MASTER_IP}:7001,${MY_IP}:7001"
+		render_template ${BASE}/etc/user-data > /tmp/user-data.${OS_INSTANCE_NAME}.$$
+	    fi
+	    nova boot \
+		--user-data /tmp/user-data.${OS_INSTANCE_NAME}.$$ \
+		--image CoreOS \
+		--key-name ${OS_KEYPAIR_NAME} \
+		--flavor ${OS_FLAVOR} \
+		--security-groups ${OS_SECURITY_GROUPS} \
+		--num-instances ${NUM_INSTANCES} \
+		--availability-zone nova \
+		--nic net-id=${OS_NETWORK},v4-fixed-ip=${MY_IP} \
+		$OS_INSTANCE_NAME
+
+	    debug "Waiting for ${OS_INSTANCE_NAME} to boot..."
+	    until [[ $(nova list | egrep "$OS_INSTANCE_NAME.+(Running)" | wc -l) == $NUM_INSTANCES ]] ; do sleep 10; debug -n "."; done
+	    debug ""
+	    IP=$(nova list |  egrep "$OS_INSTANCE_NAME.+(Running)"|awk '{print $(NF-1)}'|sed -e 's/.*=//')
+	    ;;
+    esac
+}
